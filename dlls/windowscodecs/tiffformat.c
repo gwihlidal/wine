@@ -1,5 +1,6 @@
 /*
  * Copyright 2010 Vincent Povirk for CodeWeavers
+ * Copyright 2016 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -461,6 +462,12 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
         decode_info->bpp = bps;
         switch (bps)
         {
+        case 1:
+            decode_info->format = &GUID_WICPixelFormat1bppIndexed;
+            break;
+        case 2:
+            decode_info->format = &GUID_WICPixelFormat2bppIndexed;
+            break;
         case 4:
             decode_info->format = &GUID_WICPixelFormat4bppIndexed;
             break;
@@ -469,7 +476,7 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
             break;
         default:
             FIXME("unhandled indexed bit count %u\n", bps);
-            return E_FAIL;
+            return E_NOTIMPL;
         }
         break;
     case 4: /* Transparency mask */
@@ -1408,6 +1415,9 @@ static const struct tiff_encode_format formats[] = {
     {&GUID_WICPixelFormat48bppRGB, 2, 16, 3, 48, 0, 0, 0},
     {&GUID_WICPixelFormat64bppRGBA, 2, 16, 4, 64, 1, 2, 0},
     {&GUID_WICPixelFormat64bppPRGBA, 2, 16, 4, 64, 1, 1, 0},
+    {&GUID_WICPixelFormat1bppIndexed, 3, 1, 1, 1, 0, 0, 0},
+    {&GUID_WICPixelFormat4bppIndexed, 3, 4, 1, 4, 0, 0, 0},
+    {&GUID_WICPixelFormat8bppIndexed, 3, 8, 1, 8, 0, 0, 0},
     {0}
 };
 
@@ -1579,9 +1589,12 @@ static HRESULT WINAPI TiffFrameEncode_SetPixelFormat(IWICBitmapFrameEncode *ifac
         return WINCODEC_ERR_WRONGSTATE;
     }
 
+    if (IsEqualGUID(pPixelFormat, &GUID_WICPixelFormat2bppIndexed))
+        *pPixelFormat = GUID_WICPixelFormat4bppIndexed;
+
     for (i=0; formats[i].guid; i++)
     {
-        if (memcmp(formats[i].guid, pPixelFormat, sizeof(GUID)) == 0)
+        if (IsEqualGUID(formats[i].guid, pPixelFormat))
             break;
     }
 
@@ -1688,6 +1701,21 @@ static HRESULT WINAPI TiffFrameEncode_WritePixels(IWICBitmapFrameEncode *iface,
             pTIFFSetField(This->parent->tiff, TIFFTAG_RESOLUTIONUNIT, (uint16)2); /* Inch */
             pTIFFSetField(This->parent->tiff, TIFFTAG_XRESOLUTION, (float)This->xres);
             pTIFFSetField(This->parent->tiff, TIFFTAG_YRESOLUTION, (float)This->yres);
+        }
+
+        if (This->format->bpp <= 8 && This->colors && !IsEqualGUID(This->format->guid, &GUID_WICPixelFormatBlackWhite))
+        {
+            uint16 red[256], green[256], blue[256];
+            UINT i;
+
+            for (i = 0; i < This->colors; i++)
+            {
+                red[i] = (This->palette[i] >> 8) & 0xff00;
+                green[i] = This->palette[i] & 0xff00;
+                blue[i] = (This->palette[i] << 8) & 0xff00;
+            }
+
+            pTIFFSetField(This->parent->tiff, TIFFTAG_COLORMAP, red, green, blue);
         }
 
         This->info_written = TRUE;
@@ -1884,15 +1912,31 @@ exit:
 static HRESULT WINAPI TiffEncoder_GetContainerFormat(IWICBitmapEncoder *iface,
     GUID *pguidContainerFormat)
 {
+    TRACE("(%p,%p)\n", iface, pguidContainerFormat);
+
+    if (!pguidContainerFormat)
+        return E_INVALIDARG;
+
     memcpy(pguidContainerFormat, &GUID_ContainerFormatTiff, sizeof(GUID));
     return S_OK;
 }
 
-static HRESULT WINAPI TiffEncoder_GetEncoderInfo(IWICBitmapEncoder *iface,
-    IWICBitmapEncoderInfo **ppIEncoderInfo)
+static HRESULT WINAPI TiffEncoder_GetEncoderInfo(IWICBitmapEncoder *iface, IWICBitmapEncoderInfo **info)
 {
-    FIXME("(%p,%p): stub\n", iface, ppIEncoderInfo);
-    return E_NOTIMPL;
+    IWICComponentInfo *comp_info;
+    HRESULT hr;
+
+    TRACE("%p,%p\n", iface, info);
+
+    if (!info) return E_INVALIDARG;
+
+    hr = CreateComponentInfo(&CLSID_WICTiffEncoder, &comp_info);
+    if (hr == S_OK)
+    {
+        hr = IWICComponentInfo_QueryInterface(comp_info, &IID_IWICBitmapEncoderInfo, (void **)info);
+        IWICComponentInfo_Release(comp_info);
+    }
+    return hr;
 }
 
 static HRESULT WINAPI TiffEncoder_SetColorContexts(IWICBitmapEncoder *iface,
@@ -1964,7 +2008,7 @@ static HRESULT WINAPI TiffEncoder_CreateNewFrame(IWICBitmapEncoder *iface,
             VARIANT v;
             VariantInit(&v);
             V_VT(&v) = VT_UI1;
-            V_UNION(&v, bVal) = WICTiffCompressionDontCare;
+            V_UI1(&v) = WICTiffCompressionDontCare;
             hr = IPropertyBag2_Write(*ppIEncoderOptions, 1, (PROPBAG2 *)opts, &v);
             VariantClear(&v);
             if (FAILED(hr))

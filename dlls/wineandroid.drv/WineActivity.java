@@ -348,16 +348,16 @@ public class WineActivity extends Activity
         protected WineWindowGroup window_group;
         protected WineWindowGroup client_group;
 
-        public WineWindow( int w, WineWindow parent )
+        public WineWindow( int w, WineWindow parent, float scale )
         {
             Log.i( LOGTAG, String.format( "create hwnd %08x", w ));
             hwnd = w;
             owner = 0;
             style = 0;
-            scale = 1.0f;
             visible = false;
             visible_rect = client_rect = new Rect( 0, 0, 0, 0 );
             this.parent = parent;
+            this.scale = scale;
             children = new ArrayList<WineWindow>();
             win_map.put( w, this );
             if (parent != null) parent.children.add( this );
@@ -530,6 +530,20 @@ public class WineActivity extends Activity
             return hwnd;
         }
 
+        private void update_surface( boolean is_client )
+        {
+            if (is_client)
+            {
+                Log.i( LOGTAG, String.format( "set client surface hwnd %08x %s", hwnd, client_surface ));
+                if (client_surface != null) wine_surface_changed( hwnd, client_surface, true );
+            }
+            else
+            {
+                Log.i( LOGTAG, String.format( "set window surface hwnd %08x %s", hwnd, window_surface ));
+                if (window_surface != null) wine_surface_changed( hwnd, window_surface, false );
+            }
+        }
+
         public void set_surface( SurfaceTexture surftex, boolean is_client )
         {
             if (is_client)
@@ -540,8 +554,6 @@ public class WineActivity extends Activity
                     client_surftex = surftex;
                     client_surface = new Surface( surftex );
                 }
-                Log.i( LOGTAG, String.format( "set client surface hwnd %08x %s", hwnd, client_surface ));
-                wine_surface_changed( hwnd, client_surface, true );
             }
             else
             {
@@ -551,9 +563,8 @@ public class WineActivity extends Activity
                     window_surftex = surftex;
                     window_surface = new Surface( surftex );
                 }
-                Log.i( LOGTAG, String.format( "set window surface hwnd %08x %s", hwnd, window_surface ));
-                wine_surface_changed( hwnd, window_surface, false );
             }
+            update_surface( is_client );
         }
 
         public void get_event_pos( MotionEvent event, int[] pos )
@@ -744,11 +755,11 @@ public class WineActivity extends Activity
         public TopView( Context context, int hwnd )
         {
             super( context );
-            desktop_window = new WineWindow( hwnd, null );
+            desktop_window = new WineWindow( hwnd, null, 1.0f );
             addView( desktop_window.create_whole_view() );
             desktop_window.client_group.bringToFront();
 
-            message_window = new WineWindow( WineWindow.HWND_MESSAGE, null );
+            message_window = new WineWindow( WineWindow.HWND_MESSAGE, null, 1.0f );
             message_window.create_window_groups();
         }
 
@@ -786,8 +797,7 @@ public class WineActivity extends Activity
         WineWindow win = get_window( hwnd );
         if (win == null)
         {
-            win = new WineWindow( hwnd, get_window( parent ));
-            win.scale = scale;
+            win = new WineWindow( hwnd, get_window( parent ), scale );
             win.create_window_groups();
             if (win.parent == desktop_window) win.create_whole_view();
         }
