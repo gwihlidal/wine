@@ -46,6 +46,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(cryptui);
 
 static HINSTANCE hInstance;
 
+static const WCHAR empty[] = {0};
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
     TRACE("(0x%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
@@ -804,8 +806,6 @@ static LRESULT CALLBACK cert_mgr_advanced_dlg_proc(HWND hwnd, UINT msg,
 
 static void cert_mgr_clear_cert_selection(HWND hwnd)
 {
-    WCHAR empty[] = { 0 };
-
     EnableWindow(GetDlgItem(hwnd, IDC_MGR_EXPORT), FALSE);
     EnableWindow(GetDlgItem(hwnd, IDC_MGR_REMOVE), FALSE);
     EnableWindow(GetDlgItem(hwnd, IDC_MGR_VIEW), FALSE);
@@ -1166,7 +1166,6 @@ static LRESULT CALLBACK cert_mgr_dlg_proc(HWND hwnd, UINT msg, WPARAM wp,
             break;
         case LVN_ITEMCHANGED:
         {
-            WCHAR empty[] = { 0 };
             NMITEMACTIVATE *nm = (NMITEMACTIVATE*)lp;
             HWND lv = GetDlgItem(hwnd, IDC_MGR_CERTS);
             int numSelected = SendMessageW(lv, LVM_GETSELECTEDCOUNT, 0, 0);
@@ -3498,7 +3497,7 @@ static void set_general_cert_properties(HWND hwnd, struct edit_cert_data *data)
 static void set_cert_string_property(PCCERT_CONTEXT cert, DWORD prop,
  LPWSTR str)
 {
-    if (str && strlenW(str))
+    if (str && *str)
     {
         CRYPT_DATA_BLOB blob;
 
@@ -4905,7 +4904,7 @@ static const WCHAR filter_cms[] = { '*','.','s','p','c',';','*','.',
  'p','7','b',0 };
 static const WCHAR filter_all[] = { '*','.','*',0 };
 
-static struct StringToFilter
+static const struct
 {
     int     id;
     DWORD   allowFlags;
