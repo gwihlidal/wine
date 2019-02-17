@@ -3053,8 +3053,7 @@ static void query_internal_format(struct wined3d_adapter *adapter,
             if (!(format->f.flags[WINED3D_GL_RES_TYPE_TEX_2D]
                     & (WINED3DFMT_FLAG_SRGB_READ | WINED3DFMT_FLAG_SRGB_WRITE)))
                 format->srgb_internal = format->internal;
-            else if (wined3d_settings.offscreen_rendering_mode != ORM_FBO
-                    && gl_info->supported[EXT_TEXTURE_SRGB_DECODE])
+            else if (gl_info->supported[EXT_TEXTURE_SRGB_DECODE])
                 format->internal = format->srgb_internal;
         }
     }
@@ -3076,8 +3075,7 @@ static void query_internal_format(struct wined3d_adapter *adapter,
                 format->srgb_internal = format->internal;
                 format_clear_flag(&format->f, WINED3DFMT_FLAG_SRGB_READ | WINED3DFMT_FLAG_SRGB_WRITE);
             }
-            else if (wined3d_settings.offscreen_rendering_mode != ORM_FBO
-                    && gl_info->supported[EXT_TEXTURE_SRGB_DECODE])
+            else if (gl_info->supported[EXT_TEXTURE_SRGB_DECODE])
             {
                 format->internal = format->srgb_internal;
             }
@@ -4517,7 +4515,6 @@ const char *debug_d3dusage(DWORD usage)
 
     init_debug_buffer(&buffer, "0");
 #define WINED3DUSAGE_TO_STR(x) if (usage & x) { debug_append(&buffer, #x, " | "); usage &= ~x; }
-    WINED3DUSAGE_TO_STR(WINED3DUSAGE_WRITEONLY);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_SOFTWAREPROCESSING);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_DONOTCLIP);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_POINTS);
@@ -6284,10 +6281,10 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
 
     for (i = 0; i < MAX_ACTIVE_LIGHTS; ++i)
     {
-        if (!state->lights[i])
+        if (!state->light_state.lights[i])
             continue;
 
-        switch (state->lights[i]->OriginalParms.type)
+        switch (state->light_state.lights[i]->OriginalParms.type)
         {
             case WINED3D_LIGHT_POINT:
                 ++settings->point_light_count;
@@ -6302,7 +6299,7 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
                 ++settings->parallel_point_light_count;
                 break;
             default:
-                FIXME("Unhandled light type %#x.\n", state->lights[i]->OriginalParms.type);
+                FIXME("Unhandled light type %#x.\n", state->light_state.lights[i]->OriginalParms.type);
                 break;
         }
     }

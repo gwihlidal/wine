@@ -1066,7 +1066,7 @@ DWORD WINAPI RtlAddGrowableFunctionTable( void **table, RUNTIME_FUNCTION *functi
 {
     FIXME( "(%p, %p, %d, %d, %ld, %ld) stub!\n", table, functions, count, max_count, base, end );
     if (table) *table = NULL;
-    return S_OK;
+    return STATUS_SUCCESS;
 }
 
 /*************************************************************************
@@ -1075,6 +1075,14 @@ DWORD WINAPI RtlAddGrowableFunctionTable( void **table, RUNTIME_FUNCTION *functi
 void WINAPI RtlGrowFunctionTable( void *table, DWORD count )
 {
     FIXME( "(%p, %d) stub!\n", table, count );
+}
+
+/*************************************************************************
+ *              RtlDeleteGrowableFunctionTable   (NTDLL.@)
+ */
+void WINAPI RtlDeleteGrowableFunctionTable( void *table )
+{
+    FIXME( "(%p) stub!\n", table );
 }
 
 /**********************************************************************
@@ -1319,7 +1327,7 @@ PCONTEXT DECLSPEC_HIDDEN attach_thread( LPTHREAD_START_ROUTINE entry, void *arg,
         init_thread_context( ctx, entry, arg, relay );
     }
     ctx->ContextFlags = CONTEXT_FULL;
-    attach_dlls( ctx, (void **)&ctx->R0 );
+    LdrInitializeThunk( ctx, (void **)&ctx->R0, 0, 0 );
     return ctx;
 }
 

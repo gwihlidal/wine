@@ -600,22 +600,19 @@ static void wined3d_cs_exec_clear(struct wined3d_cs *cs, const void *data)
 void wined3d_cs_emit_clear(struct wined3d_cs *cs, DWORD rect_count, const RECT *rects,
         DWORD flags, const struct wined3d_color *color, float depth, DWORD stencil)
 {
-    unsigned int rt_count = cs->device->adapter->d3d_info.limits.max_rt_count;
     const struct wined3d_state *state = &cs->device->state;
     const struct wined3d_viewport *vp = &state->viewports[0];
     struct wined3d_rendertarget_view *view;
     struct wined3d_cs_clear *op;
-    RECT view_rect;
-    unsigned int i;
+    unsigned int rt_count, i;
+
+    rt_count = flags & WINED3DCLEAR_TARGET ? cs->device->adapter->d3d_info.limits.max_rt_count : 0;
 
     op = wined3d_cs_require_space(cs, FIELD_OFFSET(struct wined3d_cs_clear, rects[rect_count]),
             WINED3D_CS_QUEUE_DEFAULT);
     op->opcode = WINED3D_CS_OP_CLEAR;
-    op->flags = flags;
-    if (flags & WINED3DCLEAR_TARGET)
-        op->rt_count = rt_count;
-    else
-        op->rt_count = 0;
+    op->flags = flags & (WINED3DCLEAR_TARGET | WINED3DCLEAR_ZBUFFER | WINED3DCLEAR_STENCIL);
+    op->rt_count = rt_count;
     op->fb = &cs->fb;
     SetRect(&op->draw_rect, vp->x, vp->y, vp->x + vp->width, vp->y + vp->height);
     if (state->render_states[WINED3D_RS_SCISSORTESTENABLE])
@@ -626,23 +623,14 @@ void wined3d_cs_emit_clear(struct wined3d_cs *cs, DWORD rect_count, const RECT *
     op->rect_count = rect_count;
     memcpy(op->rects, rects, sizeof(*rects) * rect_count);
 
-    if (flags & WINED3DCLEAR_TARGET)
+    for (i = 0; i < rt_count; ++i)
     {
-        for (i = 0; i < rt_count; ++i)
-        {
-            if ((view = state->fb->render_targets[i]))
-            {
-                SetRect(&view_rect, 0, 0, view->width, view->height);
-                IntersectRect(&op->draw_rect, &op->draw_rect, &view_rect);
-                wined3d_resource_acquire(view->resource);
-            }
-        }
+        if ((view = state->fb->render_targets[i]))
+            wined3d_resource_acquire(view->resource);
     }
     if (flags & (WINED3DCLEAR_ZBUFFER | WINED3DCLEAR_STENCIL))
     {
         view = state->fb->depth_stencil;
-        SetRect(&view_rect, 0, 0, view->width, view->height);
-        IntersectRect(&op->draw_rect, &op->draw_rect, &view_rect);
         wined3d_resource_acquire(view->resource);
     }
 
@@ -660,7 +648,7 @@ void wined3d_cs_emit_clear_rendertarget_view(struct wined3d_cs *cs, struct wined
     op->fb = (void *)&op->rects[1];
 
     op->opcode = WINED3D_CS_OP_CLEAR;
-    op->flags = flags;
+    op->flags = flags & (WINED3DCLEAR_TARGET | WINED3DCLEAR_ZBUFFER | WINED3DCLEAR_STENCIL);
     if (flags & WINED3DCLEAR_TARGET)
     {
         op->rt_count = 1;
@@ -1830,7 +1818,7 @@ static void wined3d_cs_exec_set_light(struct wined3d_cs *cs, const void *data)
 
     light_idx = op->light.OriginalIndex;
 
-    if (!(light_info = wined3d_state_get_light(&cs->state, light_idx)))
+    if (!(light_info = wined3d_light_state_get_light(&cs->state.light_state, light_idx)))
     {
         TRACE("Adding new light.\n");
         if (!(light_info = heap_alloc_zero(sizeof(*light_info))))
@@ -1840,7 +1828,7 @@ static void wined3d_cs_exec_set_light(struct wined3d_cs *cs, const void *data)
         }
 
         hash_idx = LIGHTMAP_HASHFUNC(light_idx);
-        list_add_head(&cs->state.light_map[hash_idx], &light_info->entry);
+        list_add_head(&cs->state.light_state.light_map[hash_idx], &light_info->entry);
         light_info->glIndex = -1;
         light_info->OriginalIndex = light_idx;
     }
@@ -1877,14 +1865,14 @@ static void wined3d_cs_exec_set_light_enable(struct wined3d_cs *cs, const void *
     struct wined3d_light_info *light_info;
     int prev_idx;
 
-    if (!(light_info = wined3d_state_get_light(&cs->state, op->idx)))
+    if (!(light_info = wined3d_light_state_get_light(&cs->state.light_state, op->idx)))
     {
         ERR("Light doesn't exist.\n");
         return;
     }
 
     prev_idx = light_info->glIndex;
-    wined3d_state_enable_light(&cs->state, &device->adapter->d3d_info, light_info, op->enable);
+    wined3d_light_state_enable_light(&cs->state.light_state, &device->adapter->d3d_info, light_info, op->enable);
     if (light_info->glIndex != prev_idx)
     {
         device_invalidate_state(device, STATE_LIGHT_TYPE);

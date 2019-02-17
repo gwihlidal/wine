@@ -26,8 +26,8 @@
 #ifndef __WINE_WINED3D_H
 #define __WINE_WINED3D_H
 
-#ifndef __WINE_CONFIG_H
-# error You must include config.h to use this header
+#ifndef __WINE_WINE_PORT_H
+# error You must include wine/port.h to use this header
 #endif
 
 #include "wine/list.h"
@@ -914,7 +914,6 @@ enum wined3d_shader_type
 #define WINED3D_BIND_DEPTH_STENCIL                              0x00000040
 #define WINED3D_BIND_UNORDERED_ACCESS                           0x00000080
 
-#define WINED3DUSAGE_WRITEONLY                                  0x00000008
 #define WINED3DUSAGE_SOFTWAREPROCESSING                         0x00000010
 #define WINED3DUSAGE_DONOTCLIP                                  0x00000020
 #define WINED3DUSAGE_POINTS                                     0x00000040
@@ -926,7 +925,7 @@ enum wined3d_shader_type
 #define WINED3DUSAGE_RESTRICT_SHARED_RESOURCE                   0x00002000
 #define WINED3DUSAGE_DMAP                                       0x00004000
 #define WINED3DUSAGE_TEXTAPI                                    0x10000000
-#define WINED3DUSAGE_MASK                                       0x10007bf8
+#define WINED3DUSAGE_MASK                                       0x10007bf0
 
 #define WINED3DUSAGE_SCRATCH                                    0x00400000
 #define WINED3DUSAGE_PRIVATE                                    0x00800000
@@ -1575,7 +1574,6 @@ enum wined3d_shader_type
 #define WINED3D_OUTPUT_SLOT_UNUSED                              0xfffffffe
 
 #define WINED3D_MAX_STREAM_OUTPUT_BUFFERS                       4
-#define WINED3D_STREAM_OUTPUT_GAP                               0xffffffff
 #define WINED3D_NO_RASTERIZER_STREAM                            0xffffffff
 
 #define WINED3D_VIEW_BUFFER_RAW                                 0x00000001
@@ -2061,7 +2059,8 @@ struct wined3d_shader_desc
 struct wined3d_stream_output_element
 {
     unsigned int stream_idx;
-    unsigned int register_idx;
+    const char *semantic_name;
+    unsigned int semantic_idx;
     BYTE component_idx;
     BYTE component_count;
     BYTE output_slot;
@@ -2069,7 +2068,7 @@ struct wined3d_stream_output_element
 
 struct wined3d_stream_output_desc
 {
-    struct wined3d_stream_output_element *elements;
+    const struct wined3d_stream_output_element *elements;
     unsigned int element_count;
     unsigned int buffer_strides[WINED3D_MAX_STREAM_OUTPUT_BUFFERS];
     unsigned int buffer_stride_count;
@@ -2751,6 +2750,9 @@ ULONG __cdecl wined3d_vertex_declaration_decref(struct wined3d_vertex_declaratio
 void * __cdecl wined3d_vertex_declaration_get_parent(const struct wined3d_vertex_declaration *declaration);
 ULONG __cdecl wined3d_vertex_declaration_incref(struct wined3d_vertex_declaration *declaration);
 
+HRESULT __cdecl wined3d_extract_shader_input_signature_from_dxbc(struct wined3d_shader_signature *signature,
+        const void *byte_code, SIZE_T byte_code_size);
+
 /* Return the integer base-2 logarithm of x. Undefined for x == 0. */
 static inline unsigned int wined3d_log2i(unsigned int x)
 {
@@ -2780,6 +2782,13 @@ static inline unsigned int wined3d_log2i(unsigned int x)
 
     return (i = x >> 16) ? (x = i >> 8) ? l[x] + 24 : l[i] + 16 : (i = x >> 8) ? l[i] + 8 : l[x];
 #endif
+}
+
+static inline int wined3d_bit_scan(unsigned int *x)
+{
+    int bit_offset = ffs(*x) - 1;
+    *x ^= 1u << bit_offset;
+    return bit_offset;
 }
 
 static inline void wined3d_box_set(struct wined3d_box *box, unsigned int left, unsigned int top,

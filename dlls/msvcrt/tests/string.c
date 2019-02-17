@@ -2788,13 +2788,19 @@ static void test_tolower(void)
 
     errno = 0xdeadbeef;
     ret = p_tolower((char)0xF4);
-    todo_wine ok(ret == (char)0xF4, "ret = %x\n", ret);
-    todo_wine ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+    ok(ret == (char)0xF4, "ret = %x\n", ret);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
 
     errno = 0xdeadbeef;
     ret = p_tolower((char)0xD0);
-    todo_wine ok(ret == (char)0xD0, "ret = %x\n", ret);
-    todo_wine ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+    ok(ret == (char)0xD0, "ret = %x\n", ret);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+
+    setlocale(LC_ALL, "C");
+    errno = 0xdeadbeef;
+    ret = p_tolower((char)0xF4);
+    ok(ret == (char)0xF4, "ret = %x\n", ret);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
 
     /* test C locale after setting locale */
     if(!setlocale(LC_ALL, "us")) {
@@ -3269,9 +3275,21 @@ static void test__ismbclx(void)
     ret = _ismbcl0(0);
     ok(!ret, "got %d\n", ret);
 
+    ret = _ismbcl1(0);
+    ok(!ret, "got %d\n", ret);
+
+    ret = _ismbcl2(0);
+    ok(!ret, "got %d\n", ret);
+
     cp = _setmbcp(1252);
 
     ret = _ismbcl0(0x8140);
+    ok(!ret, "got %d\n", ret);
+
+    ret = _ismbcl1(0x889f);
+    ok(!ret, "got %d\n", ret);
+
+    ret = _ismbcl2(0x989f);
     ok(!ret, "got %d\n", ret);
 
     _setmbcp(932);
@@ -3281,6 +3299,27 @@ static void test__ismbclx(void)
 
     ret = _ismbcl0(0x8140);
     ok(ret, "got %d\n", ret);
+
+    ret = _ismbcl0(0x817f);
+    ok(!ret, "got %d\n", ret);
+
+    ret = _ismbcl1(0);
+    ok(!ret, "got %d\n", ret);
+
+    ret = _ismbcl1(0x889f);
+    ok(ret, "got %d\n", ret);
+
+    ret = _ismbcl1(0x88fd);
+    ok(!ret, "got %d\n", ret);
+
+    ret = _ismbcl2(0);
+    ok(!ret, "got %d\n", ret);
+
+    ret = _ismbcl2(0x989f);
+    ok(ret, "got %d\n", ret);
+
+    ret = _ismbcl2(0x993f);
+    ok(!ret, "got %d\n", ret);
 
     _setmbcp(cp);
 }
@@ -3627,7 +3666,6 @@ static void test_C_locale(void)
             ok(ret == exp, "expected %x, got %x for C locale\n", exp, ret);
         }
         else
-        todo_wine_if(ret != i)
             ok(ret == i, "expected self %x, got %x for C locale\n", i, ret);
 
         ret = p_towupper(i);
@@ -3637,7 +3675,6 @@ static void test_C_locale(void)
             ok(ret == exp, "expected %x, got %x for C locale\n", exp, ret);
         }
         else
-        todo_wine_if(ret != i)
             ok(ret == i, "expected self %x, got %x for C locale\n", i, ret);
     }
 
@@ -3658,7 +3695,6 @@ static void test_C_locale(void)
                 ok(ret == exp, "expected %x, got %x for C locale\n", exp, ret);
             }
             else
-            todo_wine_if(ret != j)
                 ok(ret == j, "expected self %x, got %x for C locale\n", j, ret);
 
             ret = p__towupper_l(j, locale);
@@ -3668,7 +3704,6 @@ static void test_C_locale(void)
                 ok(ret == exp, "expected %x, got %x for C locale\n", exp, ret);
             }
             else
-            todo_wine_if(ret != j)
                 ok(ret == j, "expected self %x, got %x for C locale\n", j, ret);
         }
 

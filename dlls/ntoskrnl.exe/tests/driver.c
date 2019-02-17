@@ -28,6 +28,7 @@
 #include "winbase.h"
 #include "winternl.h"
 #include "winioctl.h"
+#include "ddk/ntddk.h"
 #include "ddk/wdm.h"
 
 #include "driver.h"
@@ -53,12 +54,10 @@ extern int CDECL _vsnprintf(char *str, size_t len, const char *format, __ms_va_l
 static void kvprintf(const char *format, __ms_va_list ap)
 {
     static char buffer[512];
-    LARGE_INTEGER offset;
     IO_STATUS_BLOCK io;
 
     _vsnprintf(buffer, sizeof(buffer), format, ap);
-    offset.QuadPart = -1;
-    ZwWriteFile(okfile, NULL, NULL, NULL, &io, buffer, strlen(buffer), &offset, NULL);
+    ZwWriteFile(okfile, NULL, NULL, NULL, &io, buffer, strlen(buffer), NULL, NULL);
 }
 
 static void WINAPIV kprintf(const char *format, ...)
@@ -70,10 +69,9 @@ static void WINAPIV kprintf(const char *format, ...)
     __ms_va_end(valist);
 }
 
-static void WINAPIV ok_(const char *file, int line, int condition, const char *msg, ...)
+static void WINAPIV vok_(const char *file, int line, int condition, const char *msg,  __ms_va_list args)
 {
     const char *current_file;
-    __ms_va_list args;
 
     if (!(current_file = drv_strrchr(file, '/')) &&
         !(current_file = drv_strrchr(file, '\\')))
@@ -81,7 +79,6 @@ static void WINAPIV ok_(const char *file, int line, int condition, const char *m
     else
         current_file++;
 
-    __ms_va_start(args, msg);
     if (todo_level)
     {
         if (condition)
@@ -115,6 +112,39 @@ static void WINAPIV ok_(const char *file, int line, int condition, const char *m
             InterlockedIncrement(&successes);
         }
     }
+}
+
+static void WINAPIV ok_(const char *file, int line, int condition, const char *msg, ...)
+{
+    __ms_va_list args;
+    __ms_va_start(args, msg);
+    vok_(file, line, condition, msg, args);
+    __ms_va_end(args);
+}
+
+void vskip_(const char *file, int line, const char *msg, __ms_va_list args)
+{
+    const char *current_file;
+
+    if (!(current_file = drv_strrchr(file, '/')) &&
+        !(current_file = drv_strrchr(file, '\\')))
+        current_file = file;
+    else
+        current_file++;
+
+    kprintf("%s:%d: Tests skipped: ", current_file, line);
+    kvprintf(msg, args);
+    skipped++;
+}
+
+void WINAPIV win_skip_(const char *file, int line, const char *msg, ...)
+{
+    __ms_va_list args;
+    __ms_va_start(args, msg);
+    if (running_under_wine)
+        vok_(file, line, 0, msg, args);
+    else
+        vskip_(file, line, msg, args);
     __ms_va_end(args);
 }
 
@@ -142,6 +172,24 @@ static void winetest_end_todo(void)
                               winetest_end_todo())
 #define todo_wine               todo_if(running_under_wine)
 #define todo_wine_if(is_todo)   todo_if((is_todo) && running_under_wine)
+#define win_skip(...)           win_skip_(__FILE__, __LINE__, __VA_ARGS__)
+
+static void *get_proc_address(const char *name)
+{
+    UNICODE_STRING name_u;
+    ANSI_STRING name_a;
+    NTSTATUS status;
+    void *ret;
+
+    RtlInitAnsiString(&name_a, name);
+    status = RtlAnsiStringToUnicodeString(&name_u, &name_a, TRUE);
+    ok (!status, "RtlAnsiStringToUnicodeString failed: %#x\n", status);
+    if (status) return NULL;
+
+    ret = MmGetSystemRoutineAddress(&name_u);
+    RtlFreeUnicodeString(&name_u);
+    return ret;
+}
 
 static void test_currentprocess(void)
 {
@@ -150,6 +198,18 @@ static void test_currentprocess(void)
     current = IoGetCurrentProcess();
 todo_wine
     ok(current != NULL, "Expected current process to be non-NULL\n");
+}
+
+static FILE_OBJECT *last_created_file;
+
+static void test_irp_struct(IRP *irp, DEVICE_OBJECT *device)
+{
+    IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation( irp );
+
+    ok(last_created_file != NULL, "last_created_file = NULL\n");
+    ok(irpsp->FileObject == last_created_file, "FileObject != last_created_file\n");
+    ok(irpsp->DeviceObject == device, "unexpected DeviceObject\n");
+    ok(irpsp->FileObject->DeviceObject == device, "unexpected FileObject->DeviceObject\n");
 }
 
 static void test_mdl_map(void)
@@ -500,7 +560,83 @@ static void test_sync(void)
     KeCancelTimer(&timer);
 }
 
-static NTSTATUS main_test(IRP *irp, IO_STACK_LOCATION *stack, ULONG_PTR *info)
+static int callout_cnt;
+
+static void WINAPI callout(void *parameter)
+{
+    ok(parameter == (void*)0xdeadbeef, "parameter = %p\n", parameter);
+    callout_cnt++;
+}
+
+static void test_stack_callout(void)
+{
+    NTSTATUS (WINAPI *pKeExpandKernelStackAndCallout)(PEXPAND_STACK_CALLOUT,void*,SIZE_T);
+    NTSTATUS (WINAPI *pKeExpandKernelStackAndCalloutEx)(PEXPAND_STACK_CALLOUT,void*,SIZE_T,BOOLEAN,void*);
+    NTSTATUS ret;
+
+    pKeExpandKernelStackAndCallout = get_proc_address("KeExpandKernelStackAndCallout");
+    if (pKeExpandKernelStackAndCallout)
+    {
+        callout_cnt = 0;
+        ret = pKeExpandKernelStackAndCallout(callout, (void*)0xdeadbeef, 4096);
+        ok(ret == STATUS_SUCCESS, "KeExpandKernelStackAndCallout failed: %#x\n", ret);
+        ok(callout_cnt == 1, "callout_cnt = %u\n", callout_cnt);
+    }
+    else win_skip("KeExpandKernelStackAndCallout is not available\n");
+
+    pKeExpandKernelStackAndCalloutEx = get_proc_address("KeExpandKernelStackAndCalloutEx");
+    if (pKeExpandKernelStackAndCalloutEx)
+    {
+        callout_cnt = 0;
+        ret = pKeExpandKernelStackAndCalloutEx(callout, (void*)0xdeadbeef, 4096, FALSE, NULL);
+        ok(ret == STATUS_SUCCESS, "KeExpandKernelStackAndCalloutEx failed: %#x\n", ret);
+        ok(callout_cnt == 1, "callout_cnt = %u\n", callout_cnt);
+    }
+    else win_skip("KeExpandKernelStackAndCalloutEx is not available\n");
+}
+
+static void test_lookaside_list(void)
+{
+    NPAGED_LOOKASIDE_LIST list;
+    ULONG tag = 0x454e4957; /* WINE */
+
+    ExInitializeNPagedLookasideList(&list, NULL, NULL, POOL_NX_ALLOCATION, LOOKASIDE_MINIMUM_BLOCK_SIZE, tag, 0);
+    ok(list.L.Depth == 4, "Expected 4 got %u\n", list.L.Depth);
+    ok(list.L.MaximumDepth == 256, "Expected 256 got %u\n", list.L.MaximumDepth);
+    ok(list.L.TotalAllocates == 0, "Expected 0 got %u\n", list.L.TotalAllocates);
+    ok(list.L.AllocateMisses == 0, "Expected 0 got %u\n", list.L.AllocateMisses);
+    ok(list.L.TotalFrees == 0, "Expected 0 got %u\n", list.L.TotalFrees);
+    ok(list.L.FreeMisses == 0, "Expected 0 got %u\n", list.L.FreeMisses);
+    ok(list.L.Type == (NonPagedPool|POOL_NX_ALLOCATION),
+       "Expected NonPagedPool|POOL_NX_ALLOCATION got %u\n", list.L.Type);
+    ok(list.L.Tag == tag, "Expected %x got %x\n", tag, list.L.Tag);
+    ok(list.L.Size == LOOKASIDE_MINIMUM_BLOCK_SIZE,
+       "Expected %u got %u\n", LOOKASIDE_MINIMUM_BLOCK_SIZE, list.L.Size);
+    ok(list.L.LastTotalAllocates == 0,"Expected 0 got %u\n", list.L.LastTotalAllocates);
+    ok(list.L.LastAllocateMisses == 0,"Expected 0 got %u\n", list.L.LastAllocateMisses);
+    ExDeleteNPagedLookasideList(&list);
+
+    list.L.Depth = 0;
+    ExInitializeNPagedLookasideList(&list, NULL, NULL, 0, LOOKASIDE_MINIMUM_BLOCK_SIZE, tag, 20);
+    ok(list.L.Depth == 4, "Expected 4 got %u\n", list.L.Depth);
+    ok(list.L.MaximumDepth == 256, "Expected 256 got %u\n", list.L.MaximumDepth);
+    ok(list.L.Type == NonPagedPool, "Expected NonPagedPool got %u\n", list.L.Type);
+    ExDeleteNPagedLookasideList(&list);
+}
+
+static void test_version(void)
+{
+    USHORT *pNtBuildNumber;
+    ULONG build;
+
+    pNtBuildNumber = get_proc_address("NtBuildNumber");
+    ok(!!pNtBuildNumber, "Could not get pointer to NtBuildNumber\n");
+
+    PsGetVersion(NULL, NULL, &build, NULL);
+    ok(*pNtBuildNumber == build, "Expected build number %u, got %u\n", build, *pNtBuildNumber);
+}
+
+static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *stack, ULONG_PTR *info)
 {
     ULONG length = stack->Parameters.DeviceIoControl.OutputBufferLength;
     void *buffer = irp->AssociatedIrp.SystemBuffer;
@@ -522,13 +658,17 @@ static NTSTATUS main_test(IRP *irp, IO_STACK_LOCATION *stack, ULONG_PTR *info)
     winetest_report_success = test_input->winetest_report_success;
     attr.ObjectName = &pathU;
     attr.Attributes = OBJ_KERNEL_HANDLE; /* needed to be accessible from system threads */
-    ZwOpenFile(&okfile, FILE_APPEND_DATA, &attr, &io, 0, 0);
+    ZwOpenFile(&okfile, FILE_APPEND_DATA | SYNCHRONIZE, &attr, &io, 0, FILE_SYNCHRONOUS_IO_NONALERT);
 
+    test_irp_struct(irp, device);
     test_currentprocess();
     test_mdl_map();
     test_init_funcs();
     test_load_driver();
     test_sync();
+    test_version();
+    test_stack_callout();
+    test_lookaside_list();
 
     /* print process report */
     if (test_input->winetest_debug)
@@ -580,6 +720,10 @@ static NTSTATUS test_load_driver_ioctl(IRP *irp, IO_STACK_LOCATION *stack, ULONG
 
 static NTSTATUS WINAPI driver_Create(DEVICE_OBJECT *device, IRP *irp)
 {
+    IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation( irp );
+
+    last_created_file = irpsp->FileObject;
+
     irp->IoStatus.Status = STATUS_SUCCESS;
     IoCompleteRequest(irp, IO_NO_INCREMENT);
     return STATUS_SUCCESS;
@@ -596,7 +740,7 @@ static NTSTATUS WINAPI driver_IoControl(DEVICE_OBJECT *device, IRP *irp)
             status = test_basic_ioctl(irp, stack, &irp->IoStatus.Information);
             break;
         case IOCTL_WINETEST_MAIN_TEST:
-            status = main_test(irp, stack, &irp->IoStatus.Information);
+            status = main_test(device, irp, stack, &irp->IoStatus.Information);
             break;
         case IOCTL_WINETEST_LOAD_DRIVER:
             status = test_load_driver_ioctl(irp, stack, &irp->IoStatus.Information);
